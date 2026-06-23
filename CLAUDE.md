@@ -30,7 +30,7 @@ MCP servers (Railway — second consolidated service)
 
 Managed external services
   Qdrant Cloud     — vector DB (filings collection + reports collection)
-  Upstash Redis    — session state, conversation buffer, watchlist
+  Upstash Redis    — session state, conversation buffer
   Cloudflare R2    — raw EDGAR PDF storage, idempotency state
 ```
 
@@ -72,6 +72,7 @@ Agent SDK reads `ANTHROPIC_BASE_URL` — point it at Groq-compatible endpoint du
 - Tool errors returned as typed error responses, never raised as exceptions to the agent
 - `code_execution_tool` uses RestrictedPython — never raw `exec()`
 - All secrets via environment variables — no hardcoded keys anywhere
+- All env vars loaded from `app/config.py` (pydantic-settings) — never `os.getenv()` inline
 
 ### Frontend (TypeScript)
 - Tailwind CSS only — no CSS files, no inline styles, no component libraries
@@ -119,65 +120,107 @@ class ResearchReport(BaseModel):
 stock-research-agent/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI app, mounts both routers
+│   │   ├── main.py                    # FastAPI app, mounts all routers
+│   │   ├── config.py                  # pydantic-settings: all env vars in one place
+│   │   │
 │   │   ├── routers/
-│   │   │   ├── gateway.py       # POST /analyze, DELETE /sessions/{id}, GET /health
-│   │   │   └── agent.py         # GET /sessions/{id}/stream (SSE), POST /ask,
-│   │   │                        # GET /reports, GET /reports/{id}, GET /chunks/{id}
+│   │   │   ├── gateway.py             # POST /analyze, DELETE /sessions/{id}, GET /health
+│   │   │   ├── agent.py               # GET /sessions/{id}/stream (SSE), POST /ask
+│   │   │   └── reports.py             # GET /reports, GET /reports/{id}, GET /chunks/{id}
+│   │   │
 │   │   ├── agent/
-│   │   │   ├── runner.py        # Agent SDK query() wrapper + hook wiring
-│   │   │   ├── hooks.py         # PreToolUseHook, PostToolUseHook definitions
-│   │   │   ├── session.py       # Redis session load/save/clear
-│   │   │   └── prompts.py       # System prompt templates
+│   │   │   ├── runner.py              # Agent SDK query() wrapper + hook wiring
+│   │   │   ├── hooks.py               # PreToolUseHook, PostToolUseHook definitions
+│   │   │   └── prompts.py             # system prompt templates
+│   │   │
 │   │   ├── rag/
-│   │   │   ├── ingest.py        # EDGAR fetch + text extract + chunk + embed + upsert
-│   │   │   ├── retrieval.py     # BM25 + Qdrant dense + asyncio.gather + RRF + Cohere
-│   │   │   └── models.py        # Chunk, ResearchReport, Claim, ToolCall Pydantic models
+│   │   │   ├── ingest.py              # orchestrator: calls edgar→chunker→embedder→qdrant
+│   │   │   ├── retrieval.py           # BM25 + Qdrant dense + asyncio.gather + RRF + Cohere
+│   │   │   ├── chunker.py             # section detection regex + section-aware chunking
+│   │   │   └── embedder.py            # text-embedding-3-small, batches of 100
+│   │   │
+│   │   ├── clients/                   # one file per external service — HTTP logic only
+│   │   │   ├── edgar.py               # ticker→CIK, CIK→filings list, fetch raw doc
+│   │   │   ├── qdrant.py              # collection init, upsert, query helpers
+│   │   │   ├── redis.py               # session load/save/clear
+│   │   │   ├── cohere.py              # reranker call
+│   │   │   ├── alpha_vantage.py       # price, P/E, revenue, ratios
+│   │   │   └── brave.py               # news search
+│   │   │
+│   │   ├── models/                    # Pydantic models split by domain
+│   │   │   ├── report.py              # ResearchReport, Claim, ToolCall
+│   │   │   ├── chunk.py               # Chunk, filings payload schema
+│   │   │   ├── session.py             # SessionState
+│   │   │   └── api.py                 # request/response schemas (AnalyzeRequest, Answer)
+│   │   │
 │   │   └── mcp_servers/
-│   │       ├── server.py        # FastMCP app mounting all tools
-│   │       ├── rag_tool.py      # rag_retrieval_tool
-│   │       ├── stock_tool.py    # stock_data_tool (Alpha Vantage)
-│   │       ├── search_tool.py   # web_search_tool (Brave Search)
-│   │       ├── edgar_tool.py    # edgar_fetch_tool (on-demand ingestion)
-│   │       └── code_tool.py     # code_execution_tool (RestrictedPython)
+│   │       ├── server.py              # FastMCP app, mounts all tools
+│   │       ├── rag_tool.py            # rag_retrieval_tool — imports clients/qdrant + rag/retrieval
+│   │       ├── stock_tool.py          # stock_data_tool — imports clients/alpha_vantage
+│   │       ├── search_tool.py         # web_search_tool — imports clients/brave
+│   │       ├── edgar_tool.py          # edgar_fetch_tool — imports clients/edgar + rag/ingest
+│   │       └── code_tool.py           # code_execution_tool — RestrictedPython
+│   │
 │   ├── tests/
 │   │   ├── eval/
-│   │   │   ├── golden_dataset.json   # 25 Q&A pairs — DO NOT edit manually
-│   │   │   └── test_eval.py          # DeepEval faithfulness + recall@5 + groundedness
+│   │   │   ├── golden_dataset.json    # 25 Q&A pairs — DO NOT edit manually
+│   │   │   └── test_eval.py           # DeepEval faithfulness + recall@5 + groundedness
 │   │   └── unit/
+│   │
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── railway.toml
+│
 ├── frontend/
 │   ├── src/
 │   │   ├── api/
-│   │   │   ├── client.ts        # typed fetch wrappers
-│   │   │   └── schemas.ts       # Zod schemas mirroring all Pydantic models
+│   │   │   ├── client.ts              # typed fetch wrappers
+│   │   │   └── schemas.ts             # Zod schemas mirroring all Pydantic models
 │   │   ├── hooks/
-│   │   │   ├── useAgentStream.ts  # EventSource → StreamEvent[] state
-│   │   │   ├── useReport.ts       # fetch + cache a ResearchReport
-│   │   │   └── useSession.ts      # session management
+│   │   │   ├── useAgentStream.ts      # EventSource → StreamEvent[] state
+│   │   │   ├── useReport.ts           # fetch + cache a ResearchReport
+│   │   │   └── useSession.ts          # session management
 │   │   ├── components/
-│   │   │   ├── ReasoningChain.tsx   # live Thought/tool_call/observe stream
-│   │   │   ├── ReportDisplay.tsx    # bull/bear/verdict/confidence
-│   │   │   ├── CitationDrawer.tsx   # slide-over showing raw chunk text
-│   │   │   ├── MetricsHeader.tsx    # P/E, revenue, market cap row
-│   │   │   └── PromptField.tsx      # follow-up question input
+│   │   │   ├── ReasoningChain.tsx     # live Thought/tool_call/observe stream
+│   │   │   ├── ReportDisplay.tsx      # bull/bear/verdict/confidence
+│   │   │   ├── CitationDrawer.tsx     # slide-over showing raw chunk text
+│   │   │   ├── MetricsHeader.tsx      # P/E, revenue, market cap row
+│   │   │   └── PromptField.tsx        # follow-up question input
 │   │   └── pages/
-│   │       ├── Home.tsx          # search bar + intent detection
-│   │       ├── Report.tsx        # full report view + follow-up chat
-│   │       ├── History.tsx       # past reports list + compare
-│   │       └── Compare.tsx       # multi-ticker side-by-side
+│   │       ├── Home.tsx               # search bar + intent detection
+│   │       ├── Report.tsx             # full report view + follow-up chat
+│   │       ├── History.tsx            # past reports list + compare
+│   │       └── Compare.tsx            # multi-ticker side-by-side
+│   │
 │   ├── vite.config.ts
 │   ├── tailwind.config.ts
 │   └── tsconfig.json
+│
 ├── .github/
 │   └── workflows/
-│       └── ci.yml               # push → DeepEval → Docker build → ghcr.io → Railway
-├── docker-compose.yml           # local: backend + qdrant + redis (NOT frontend)
-├── CLAUDE.md                    # this file
+│       └── ci.yml                     # push → DeepEval → Docker build → ghcr.io → Railway
+│
+├── docker-compose.yml                 # local: backend + qdrant + redis (NOT frontend)
+├── CLAUDE.md                          # this file
 └── README.md
 ```
+
+---
+
+## Import rules (enforced)
+
+```
+routers/       → models/api.py, agent/runner.py, clients/redis.py
+agent/         → models/report.py, models/session.py, clients/redis.py
+rag/ingest.py  → clients/edgar.py, rag/chunker.py, rag/embedder.py, clients/qdrant.py
+rag/retrieval  → clients/qdrant.py, clients/cohere.py, models/chunk.py
+mcp_servers/   → clients/*, rag/ingest.py, rag/retrieval.py, models/*
+clients/       → config.py only — no internal app imports
+models/        → no internal app imports
+config.py      → no internal app imports
+```
+
+No circular imports. `clients/` and `models/` are leaf nodes — they import nothing from the app.
 
 ---
 
@@ -186,13 +229,11 @@ stock-research-agent/
 ### Ingestion (offline, runs once per company)
 ```
 EDGAR API → raw 10-K HTML/PDF
-  → BeautifulSoup / pdfplumber text extraction
-  → section detection (regex on Item 1A, Item 7, Item 8 headers)
-  → section-aware chunking (max 512 tokens, 50-token overlap, never crosses sections)
-  → text-embedding-3-small (batches of 100)
-  → idempotency check (skip if ticker + year already in Qdrant)
-  → Qdrant upsert: collection="filings", payload={ticker, section, year, url, text}
-  → raw PDF also stored in Cloudflare R2 at {ticker}/{year}/10K.pdf
+  → clients/edgar.py         — fetch raw doc bytes
+  → rag/chunker.py           — section detection + section-aware chunking (512 tok, 50 overlap)
+  → rag/embedder.py          — text-embedding-3-small, batches of 100
+  → clients/qdrant.py        — idempotency check + upsert to filings collection
+  → clients/r2.py            — raw PDF stored at {ticker}/{year}/10K.pdf
 ```
 
 ### Retrieval (live, per agent tool call, target <300ms)
@@ -246,7 +287,7 @@ cd frontend && npm run dev # Vite dev server on :5173 (outside Docker for HMR)
 
 ### Production
 - **Frontend:** Vercel — auto-deploys from GitHub on push to `main`
-- **Backend:** Railway service 1 — gateway + agent routers in one FastAPI app
+- **Backend:** Railway service 1 — gateway + agent + reports routers in one FastAPI app
 - **MCP servers:** Railway service 2 — all 5 MCP servers in one FastMCP app
 - **Qdrant:** Qdrant Cloud free tier (1GB)
 - **Redis:** Upstash free tier (10k commands/day)
@@ -286,9 +327,11 @@ RAILWAY_DEPLOYMENT_TIMEOUT = "600"    # agent runs can take up to 3 minutes
 - Never add inline styles to React components — Tailwind only
 - Never use raw `exec()` — code execution goes through RestrictedPython only
 - Never store API keys in code — use Railway env vars and `.env.local`
+- Never call `os.getenv()` inline — use `app/config.py` Settings class only
 - Never use `claude-code-sdk` or `ClaudeCodeOptions` — both are dead/renamed
 - Never put business logic inside React components — hooks only
 - Never use `sudo` with npm
+- Never import across layers in violation of the import rules above
 
 ---
 
@@ -302,3 +345,4 @@ RAILWAY_DEPLOYMENT_TIMEOUT = "600"    # agent runs can take up to 3 minutes
 - Eval harness: DeepEval in CI, faithfulness + groundedness metrics, golden dataset
 - Cost-pragmatic deployment: Railway + Vercel + Qdrant Cloud + Upstash — $5/month total
 - TypeScript end-to-end: Zod mirrors Pydantic, discriminated union SSE events, three-layer frontend architecture
+- Clean module boundaries: clients/ and models/ as leaf nodes, explicit import rules enforced across all layers

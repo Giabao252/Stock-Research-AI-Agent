@@ -13,7 +13,7 @@ function NavBar() {
 
   return (
     <nav className="flex items-center gap-6 px-6 py-4 border-b border-gray-800 bg-gray-950">
-      <span className="text-gray-100 font-bold tracking-tight mr-4">StockResearch</span>
+      <span className="text-gray-100 font-bold tracking-tight mr-4">StockBuddy</span>
       <NavLink to="/" end className={linkClass}>Search</NavLink>
       <NavLink to="/history" className={linkClass}>History</NavLink>
       <NavLink to="/compare" className={linkClass}>Compare</NavLink>
