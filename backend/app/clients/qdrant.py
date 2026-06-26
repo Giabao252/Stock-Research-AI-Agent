@@ -20,9 +20,9 @@ from qdrant_client.models import (
 from app.config import settings
 from app.models.chunk import Chunk
 
-_FILINGS_COLLECTION = "filings"
-_REPORTS_COLLECTION = "reports"
-_VECTOR_SIZE = 1536  # text-embedding-3-small dimensions
+FILINGS_COLLECTION = "filings"
+REPORTS_COLLECTION = "reports"
+VECTOR_SIZE = 1536  # text-embedding-3-small dimensions
 
 _client = AsyncQdrantClient(
     url=settings.qdrant_url,
@@ -34,16 +34,16 @@ async def init_collections() -> None:
     """Create filings and reports collections if they don't already exist."""
     existing = {c.name for c in (await _client.get_collections()).collections}
 
-    if _FILINGS_COLLECTION not in existing:
+    if FILINGS_COLLECTION not in existing:
         await _client.create_collection(
-            collection_name=_FILINGS_COLLECTION,
-            vectors_config=VectorParams(size=_VECTOR_SIZE, distance=Distance.COSINE),
+            collection_name=FILINGS_COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
 
-    if _REPORTS_COLLECTION not in existing:
+    if REPORTS_COLLECTION not in existing:
         await _client.create_collection(
-            collection_name=_REPORTS_COLLECTION,
-            vectors_config=VectorParams(size=_VECTOR_SIZE, distance=Distance.COSINE),
+            collection_name=REPORTS_COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
 
 
@@ -68,7 +68,7 @@ async def upsert_chunks(pairs: list[tuple[Chunk, list[float]]]) -> None:
         )
         for chunk, vector in pairs
     ]
-    await _client.upsert(collection_name=_FILINGS_COLLECTION, points=points)
+    await _client.upsert(collection_name=FILINGS_COLLECTION, points=points)
 
 
 async def query_dense(
@@ -87,7 +87,7 @@ async def query_dense(
         conditions.append(FieldCondition(key="section", match=MatchValue(value=section)))
 
     results = await _client.search(
-        collection_name=_FILINGS_COLLECTION,
+        collection_name=FILINGS_COLLECTION,
         query_vector=vector,
         query_filter=Filter(must=conditions),
         limit=limit,
