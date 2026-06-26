@@ -1,6 +1,4 @@
 """
-app/config.py
- 
 Single source of truth for all environment variables.
 Every other module imports from here — no os.getenv() calls anywhere else.
  
@@ -24,7 +22,12 @@ class Settings(BaseSettings):
     sec_user_name: str
     sec_user_email: str
 
-    #other keys
+    # OpenAI
+    openai_api_key: str
+
+    # Qdrant
+    qdrant_url: str
+    qdrant_api_key: str = ""  # empty string for local Docker (no auth)
  
  
 settings = Settings()
