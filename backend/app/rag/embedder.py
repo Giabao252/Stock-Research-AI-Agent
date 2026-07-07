@@ -1,11 +1,11 @@
 """
-Embeds a list of Chunk objects with OpenAI text-embedding-3-small.
+Embeds text with OpenAI text-embedding-3-small.
 
 Public API:
+    embed_texts(texts: list[str])   -> list[list[float]]
     embed_chunks(chunks: list[Chunk]) -> list[tuple[Chunk, list[float]]]
 
-Async and network-bound — no asyncio.to_thread() needed.
-Chunks are sent in batches of 100 to stay within the OpenAI embeddings API limits.
+Both functions batch inputs in groups of 100 and send batches concurrently.
 """
 
 import asyncio
@@ -26,23 +26,28 @@ class EmbedderError(Exception):
     """Raised when the OpenAI embeddings API call fails."""
 
 
-async def _embed_batch(batch: list[Chunk]) -> list[tuple[Chunk, list[float]]]:
+async def _embed_batch_texts(batch: list[str]) -> list[list[float]]:
     try:
-        response = await _client.embeddings.create(
-            input=[c.text for c in batch],
-            model=MODEL,
-        )
+        response = await _client.embeddings.create(input=batch, model=MODEL)
     except openai.APIError as exc:
         raise EmbedderError(f"OpenAI embeddings API error: {exc}") from exc
+    return [item.embedding for item in response.data]
 
-    return [(chunk, item.embedding) for chunk, item in zip(batch, response.data)]
+
+async def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Return one 1536-dim embedding vector per input string.
+
+    Texts are split into batches of 100 and sent concurrently.
+    """
+    batches = [texts[i : i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
+    results = await asyncio.gather(*(_embed_batch_texts(b) for b in batches))
+    return [vec for batch in results for vec in batch]
 
 
 async def embed_chunks(chunks: list[Chunk]) -> list[tuple[Chunk, list[float]]]:
-    """Return each Chunk paired with its 1536-dim embedding vector.
+    """Return each Chunk paired with its embedding vector.
 
-    Batches are sent concurrently via asyncio.gather.
+    Delegates to embed_texts — the Chunk objects are passed through unchanged.
     """
-    batches = [chunks[i : i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
-    results = await asyncio.gather(*(_embed_batch(b) for b in batches))
-    return [pair for batch_result in results for pair in batch_result]
+    vectors = await embed_texts([c.text for c in chunks])
+    return list(zip(chunks, vectors))
