@@ -78,7 +78,7 @@ def chunk_filing(
     sections = _detect_sections(text)
 
     enc = tiktoken.get_encoding("cl100k_base")
-    stride = chunk_size - overlap
+    stride = max(1, chunk_size - overlap)
     chunks: list[Chunk] = []
     chunk_index = 0
 

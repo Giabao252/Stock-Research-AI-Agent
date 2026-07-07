@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Qdrant
     qdrant_url: str
     qdrant_api_key: str = ""  # empty string for local Docker (no auth)
+
+    # Cohere
+    cohere_api_key: str
  
  
 settings = Settings()
