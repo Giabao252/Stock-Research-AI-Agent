@@ -26,6 +26,8 @@ RRF_K = 60
 
 
 def _bm25_rank(query: str, chunks: list[Chunk]) -> list[Chunk]:
+    if not chunks:
+        return []
     tokenized_corpus = [c.text.lower().split() for c in chunks]
     bm25 = BM25Okapi(tokenized_corpus)
     scores = bm25.get_scores(query.lower().split())
