@@ -31,6 +31,12 @@ class Settings(BaseSettings):
 
     # Cohere
     cohere_api_key: str
+
+    # Alpha Vantage
+    alpha_vantage_key: str
+
+    # Tavily
+    tavily_api_key: str
  
  
 settings = Settings()
