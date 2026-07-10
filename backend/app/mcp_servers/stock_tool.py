@@ -1,5 +1,10 @@
 """
-comment
+MCP tool: stock_data_tool
+
+Fetches live financial metrics - the numbers that go into ResearchReport.metrics
+and the MetricsHeader component on the frontend
+
+Agent calls it once per session
 """
 
 import asyncio
