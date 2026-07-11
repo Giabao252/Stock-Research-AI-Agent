@@ -24,7 +24,7 @@ MCP servers (Railway — second consolidated service)
   FastAPI + MCP SDK (FastMCP)
   ├── rag_retrieval_tool  — BM25 + Qdrant dense + RRF + Cohere reranker
   ├── stock_data_tool     — Alpha Vantage: price, P/E, revenue, ratios
-  ├── web_search_tool     — Brave Search: recent news, analyst ratings
+  ├── web_search_tool     — Tavily: recent news, analyst ratings
   ├── edgar_fetch_tool    — on-demand 10-K ingestion for unknown tickers
   └── code_execution_tool — RestrictedPython: P/E, PEG, YoY growth calcs
 
@@ -145,7 +145,7 @@ stock-research-agent/
 │   │   │   ├── redis.py               # session load/save/clear
 │   │   │   ├── cohere.py              # reranker call
 │   │   │   ├── alpha_vantage.py       # price, P/E, revenue, ratios
-│   │   │   └── brave.py               # news search
+│   │   │   └── tavily.py              # news search
 │   │   │
 │   │   ├── models/                    # Pydantic models split by domain
 │   │   │   ├── report.py              # ResearchReport, Claim, ToolCall
@@ -157,7 +157,7 @@ stock-research-agent/
 │   │       ├── server.py              # FastMCP app, mounts all tools
 │   │       ├── rag_tool.py            # rag_retrieval_tool — imports clients/qdrant + rag/retrieval
 │   │       ├── stock_tool.py          # stock_data_tool — imports clients/alpha_vantage
-│   │       ├── search_tool.py         # web_search_tool — imports clients/brave
+│   │       ├── search_tool.py         # web_search_tool — imports clients/tavily
 │   │       ├── edgar_tool.py          # edgar_fetch_tool — imports clients/edgar + rag/ingest
 │   │       └── code_tool.py           # code_execution_tool — RestrictedPython
 │   │
@@ -282,7 +282,7 @@ docker compose up          # starts backend service + qdrant + redis
 cd frontend && npm run dev # Vite dev server on :5173 (outside Docker for HMR)
 ```
 `.env.local` holds: `VITE_API_BASE_URL`, `ANTHROPIC_API_KEY` (or Groq key during dev),
-`QDRANT_URL`, `QDRANT_API_KEY`, `UPSTASH_REDIS_URL`, `BRAVE_API_KEY`, `ALPHA_VANTAGE_KEY`,
+`QDRANT_URL`, `QDRANT_API_KEY`, `UPSTASH_REDIS_URL`, `TAVILY_API_KEY`, `ALPHA_VANTAGE_KEY`,
 `COHERE_API_KEY`, `R2_ENDPOINT`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`
 
 ### Production

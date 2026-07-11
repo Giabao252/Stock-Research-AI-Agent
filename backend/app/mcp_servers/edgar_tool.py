@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.rag.ingest import ingest_ticker
 
-mcp = FastMCP("edgar_fetch")
+mcp = FastMCP("edgar-fetch")
 
 class IngestResult(BaseModel):
     ticker: str
