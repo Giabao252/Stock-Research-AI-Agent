@@ -12,12 +12,9 @@ import asyncio
 from fastmcp import FastMCP
 from pydantic import BaseModel
 
-from app.clients.alpha_vantage import get_quote, get_overview
+from app.clients.alpha_vantage import get_quote, get_overview, AlphaVantageTickerNotFound
 
 mcp = FastMCP('stock-data')
-
-class AlphaVantageTickerNotFound(Exception):
-    """Raised when Alpha Vantage returns no data for the given ticker."""
 
 class StockMetrics(BaseModel):
     ticker: str
