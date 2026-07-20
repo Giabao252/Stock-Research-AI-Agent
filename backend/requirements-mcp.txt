@@ -1,4 +1,0 @@
--r requirements.txt
-fastmcp==3.4.3
-RestrictedPython==7.4
-tavily-python==0.5.1
