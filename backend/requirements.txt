@@ -15,3 +15,5 @@ cohere==5.15.0
 fastmcp==3.4.3
 RestrictedPython==7.4
 tavily-python==0.5.1
+claude-agent-sdk==0.2.125
+upstash_redis==1.7.0
