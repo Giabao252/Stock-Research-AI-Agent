@@ -13,6 +13,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     VectorParams,
 )
@@ -31,7 +32,14 @@ _client = AsyncQdrantClient(
 
 
 async def init_collections() -> None:
-    """Create filings and reports collections if they don't already exist."""
+    """Create filings and reports collections if they don't already exist.
+
+    Also ensures payload indexes exist on "ticker" and "section" — Qdrant Cloud's
+    strict mode rejects filtering on an unindexed field, and query_dense() filters
+    on both. Index creation is idempotent, so this runs unconditionally on every
+    call (not just when the collection is first created) to self-heal collections
+    created before these indexes existed.
+    """
     existing = {c.name for c in (await _client.get_collections()).collections}
 
     if FILINGS_COLLECTION not in existing:
@@ -44,6 +52,13 @@ async def init_collections() -> None:
         await _client.create_collection(
             collection_name=REPORTS_COLLECTION,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+
+    for field_name in ("ticker", "section"):
+        await _client.create_payload_index(
+            collection_name=FILINGS_COLLECTION,
+            field_name=field_name,
+            field_schema=PayloadSchemaType.KEYWORD,
         )
 
 
@@ -86,13 +101,14 @@ async def query_dense(
     if section:
         conditions.append(FieldCondition(key="section", match=MatchValue(value=section)))
 
-    results = await _client.search(
+    response = await _client.query_points(
         collection_name=FILINGS_COLLECTION,
-        query_vector=vector,
+        query=vector,
         query_filter=Filter(must=conditions),
         limit=limit,
         with_payload=True,
     )
+    results = response.points
 
     return [
         Chunk(

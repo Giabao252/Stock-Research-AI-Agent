@@ -3,7 +3,7 @@ Unit tests for rag/chunker.py — pure functions, no network required.
 """
 
 import pytest
-from app.rag.chunker import chunk_filing, _detect_sections, _extract_text
+from app.rag.chunker import chunk_filing, _detect_sections, _extract_text, _make_chunk_id
 
 FAKE_10K_HTML = b"""
 <html><body>
@@ -95,3 +95,66 @@ def test_chunk_ids_differ_across_tickers():
     ids_aapl = {c.chunk_id for c in chunks_aapl}
     ids_msft = {c.chunk_id for c in chunks_msft}
     assert ids_aapl.isdisjoint(ids_msft)
+
+
+# ---------------------------------------------------------------------------
+# _make_chunk_id
+# ---------------------------------------------------------------------------
+
+def test_make_chunk_id_is_deterministic():
+    assert _make_chunk_id("AAPL", 2024, "Item 1A", 0) == _make_chunk_id("AAPL", 2024, "Item 1A", 0)
+
+
+def test_make_chunk_id_differs_by_index():
+    assert _make_chunk_id("AAPL", 2024, "Item 1A", 0) != _make_chunk_id("AAPL", 2024, "Item 1A", 1)
+
+
+def test_make_chunk_id_is_16_hex_chars():
+    chunk_id = _make_chunk_id("AAPL", 2024, "Item 1A", 0)
+    assert len(chunk_id) == 16
+    int(chunk_id, 16)  # raises ValueError if not valid hex
+
+
+# ---------------------------------------------------------------------------
+# _detect_sections — TOC dedup
+# ---------------------------------------------------------------------------
+
+def test_detect_sections_keeps_last_occurrence_of_duplicate_label():
+    # table-of-contents style: "Item 1A" listed twice, body text starts at the second
+    text = (
+        "Item 1A. Risk Factors\n"
+        "Item 1A. Risk Factors\n"
+        "The real body text of risk factors goes here."
+    )
+    sections = _detect_sections(text)
+    assert len(sections) == 1
+    offset, label = sections[0]
+    assert label == "Item 1A"
+    assert offset == text.index("Item 1A", text.index("Item 1A") + 1)  # second occurrence
+
+
+# ---------------------------------------------------------------------------
+# chunk_filing — overlap, min-token filtering, empty input
+# ---------------------------------------------------------------------------
+
+def test_chunk_filing_custom_overlap_changes_chunk_count():
+    long_html = b"<html><body><p>Item 1A. Risk Factors</p><p>" + b"risk factor sentence. " * 400 + b"</p></body></html>"
+    chunks_low_overlap = chunk_filing(long_html, ticker="AAPL", year=2024, source_url="https://x", chunk_size=100, overlap=0)
+    chunks_high_overlap = chunk_filing(long_html, ticker="AAPL", year=2024, source_url="https://x", chunk_size=100, overlap=80)
+    # smaller stride (higher overlap) produces more, more-overlapping chunks over the same text
+    assert len(chunks_high_overlap) > len(chunks_low_overlap)
+
+
+def test_chunk_filing_drops_windows_below_min_chunk_tokens():
+    # a short trailing section body well under _MIN_CHUNK_TOKENS should produce no chunk
+    short_html = b"<html><body><p>Item 1A. Risk Factors</p><p>too short</p></body></html>"
+    chunks = chunk_filing(short_html, ticker="AAPL", year=2024, source_url="https://x")
+    assert chunks == []
+
+
+def test_chunk_filing_empty_bytes_returns_empty_list():
+    assert chunk_filing(b"", ticker="AAPL", year=2024, source_url="https://x") == []
+
+
+def test_chunk_filing_whitespace_only_returns_empty_list():
+    assert chunk_filing(b"   \n\n  ", ticker="AAPL", year=2024, source_url="https://x") == []

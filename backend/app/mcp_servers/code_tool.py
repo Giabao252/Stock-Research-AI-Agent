@@ -8,6 +8,7 @@ No imports, file I/O, or network access are permitted inside the snippet.
 
 from RestrictedPython import compile_restricted, safe_globals
 from RestrictedPython import PrintCollector
+from RestrictedPython.Eval import default_guarded_getitem
 from fastmcp import FastMCP
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ async def code_execution_tool(code: str, context: dict) -> ExecutionResult:
         code:    "result = context['pe_ratio'] / (context['growth_rate'] * 100)"
         context: {"pe_ratio": 35.2, "growth_rate": 0.18}
 
-    No imports, file I/O, or network calls are allowed.
+    No imports, file I/O, or network calls allowed.
     Returns the value of `result` and any printed output.
     If a compile or runtime error occurs, result is None and error contains the message.
     """
@@ -43,6 +44,7 @@ async def code_execution_tool(code: str, context: dict) -> ExecutionResult:
         "_print_": PrintCollector,
         "_getiter_": iter,
         "_getattr_": getattr,
+        "_getitem_": default_guarded_getitem,
         "context": context,
     }
 
@@ -52,6 +54,6 @@ async def code_execution_tool(code: str, context: dict) -> ExecutionResult:
         return ExecutionResult(result=None, stdout_output="", error=str(exc))
 
     result = glb.get("result")
-    stdout_output = glb["_print_"]().txt if callable(glb.get("_print_")) else ""
+    stdout_output = glb.get("_print", lambda: "")()
 
     return ExecutionResult(result=result, stdout_output=stdout_output, error=None)
