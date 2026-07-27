@@ -56,4 +56,11 @@ async def code_execution_tool(code: str, context: dict) -> ExecutionResult:
     result = glb.get("result")
     stdout_output = glb.get("_print", lambda: "")()
 
-    return ExecutionResult(result=result, stdout_output=stdout_output, error=None)
+    try:
+        return ExecutionResult(result=result, stdout_output=stdout_output, error=None)
+    except Exception:
+        return ExecutionResult(
+            result=None,
+            stdout_output=stdout_output,
+            error=f"result must be a float, int, str, or None (got {type(result).__name__})",
+        )

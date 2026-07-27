@@ -55,3 +55,24 @@ async def test_code_execution_tool_runtime_exception():
     assert result.result is None
     assert result.error is not None
     assert "division" in result.error.lower() or "zero" in result.error.lower()
+
+
+async def test_code_execution_tool_dict_result_returns_typed_error():
+    # Regression: ExecutionResult(result=...) construction used to happen outside
+    # any try/except, so a dict/list result raised an uncaught pydantic
+    # ValidationError straight through the MCP layer instead of a clean typed
+    # error — caught via a live run where the model computed multiple metrics
+    # into one dict and the MCP server logged "Invalid arguments for tool".
+    result = await code_execution_tool(code="result = {'pe': 36.7, 'peg': 3.2}", context={})
+
+    assert result.result is None
+    assert result.error is not None
+    assert "dict" in result.error
+
+
+async def test_code_execution_tool_list_result_returns_typed_error():
+    result = await code_execution_tool(code="result = [1, 2, 3]", context={})
+
+    assert result.result is None
+    assert result.error is not None
+    assert "list" in result.error
