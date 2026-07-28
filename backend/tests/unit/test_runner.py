@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
-from app.agent.runner import RunnerError, _handle_result, _load_or_init_session, answer_question, run_analysis
+from app.agent.hooks import CitationTracker
+from app.agent.runner import RunnerError, _handle_result, _is_grounded, _load_or_init_session, answer_question, run_analysis
 from app.models.api import Answer
 from app.models.report import Claim, ResearchReport
 from app.models.session import DoneEvent, ErrorEvent, SessionState, ThoughtEvent, ToolCallEvent
@@ -82,6 +83,41 @@ def make_session(**overrides) -> SessionState:
     )
     base.update(overrides)
     return SessionState(**base)
+
+
+# ---------------------------------------------------------------------------
+# _is_grounded
+# ---------------------------------------------------------------------------
+
+def test_is_grounded_filing_claim_matches_real_source_url():
+    tracker = CitationTracker()
+    tracker.chunk_sources["aaa"] = "https://sec.gov/x"
+    claim = Claim(text="x", chunk_id="aaa", source_url="https://sec.gov/x", doc_name="AAPL 10-K 2024")
+    assert _is_grounded(claim, tracker) is True
+
+
+def test_is_grounded_filing_claim_with_unseen_chunk_id():
+    claim = Claim(text="x", chunk_id="never-seen", source_url="https://sec.gov/x", doc_name="AAPL 10-K 2024")
+    assert _is_grounded(claim, CitationTracker()) is False
+
+
+def test_is_grounded_filing_claim_with_swapped_source_url():
+    tracker = CitationTracker()
+    tracker.chunk_sources["aaa"] = "https://sec.gov/real"
+    claim = Claim(text="x", chunk_id="aaa", source_url="https://benzinga.com/fake", doc_name="AAPL 10-K 2024")
+    assert _is_grounded(claim, tracker) is False
+
+
+def test_is_grounded_news_claim_matches_seen_url():
+    tracker = CitationTracker()
+    tracker.seen_urls.add("https://benzinga.com/real")
+    claim = Claim(text="x", chunk_id=None, source_url="https://benzinga.com/real", doc_name="Benzinga")
+    assert _is_grounded(claim, tracker) is True
+
+
+def test_is_grounded_news_claim_with_unseen_url():
+    claim = Claim(text="x", chunk_id=None, source_url="https://benzinga.com/fake", doc_name="Benzinga")
+    assert _is_grounded(claim, CitationTracker()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -152,22 +188,61 @@ async def test_handle_result_marks_partial_when_claim_ungrounded():
         patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
         patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
     ):
-        await _handle_result(message, "sess-1", "AAPL", citation_tracker=set(), event_queue=asyncio.Queue())
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=CitationTracker(), event_queue=asyncio.Queue())
 
     saved_report = mock_save.call_args[0][0].partial_report
     assert saved_report.partial is True
     assert "1 claim" in saved_report.partial_reason
 
 
-async def test_handle_result_grounded_claim_stays_not_partial():
+async def test_handle_result_grounded_filing_claim_stays_not_partial():
     claim = Claim(text="Revenue grew", chunk_id="aaa", source_url="https://sec.gov/x", doc_name="AAPL 10-K 2024")
     message = make_result_message(structured_output=make_report(claims=[claim]).model_dump())
+
+    tracker = CitationTracker()
+    tracker.chunk_sources["aaa"] = "https://sec.gov/x"
 
     with (
         patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
         patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
     ):
-        await _handle_result(message, "sess-1", "AAPL", citation_tracker={"aaa"}, event_queue=asyncio.Queue())
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=tracker, event_queue=asyncio.Queue())
+
+    saved_report = mock_save.call_args[0][0].partial_report
+    assert saved_report.partial is False
+
+
+async def test_handle_result_reused_chunk_id_with_swapped_url_is_ungrounded():
+    # Regression: caught in a live run — the model reused a real chunk_id but
+    # paired it with a fabricated external URL instead of that chunk's real one.
+    claim = Claim(text="Analyst price target raised", chunk_id="aaa", source_url="https://benzinga.com/fake", doc_name="AAPL 10-K 2024")
+    message = make_result_message(structured_output=make_report(claims=[claim]).model_dump())
+
+    tracker = CitationTracker()
+    tracker.chunk_sources["aaa"] = "https://sec.gov/x"  # real source_url for "aaa" differs
+
+    with (
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
+    ):
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=tracker, event_queue=asyncio.Queue())
+
+    saved_report = mock_save.call_args[0][0].partial_report
+    assert saved_report.partial is True
+
+
+async def test_handle_result_grounded_news_claim_stays_not_partial():
+    claim = Claim(text="Analyst raised price target", chunk_id=None, source_url="https://benzinga.com/real", doc_name="Benzinga")
+    message = make_result_message(structured_output=make_report(claims=[claim]).model_dump())
+
+    tracker = CitationTracker()
+    tracker.seen_urls.add("https://benzinga.com/real")
+
+    with (
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
+    ):
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=tracker, event_queue=asyncio.Queue())
 
     saved_report = mock_save.call_args[0][0].partial_report
     assert saved_report.partial is False
@@ -181,7 +256,7 @@ async def test_handle_result_error_message_sets_session_error_status():
         patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
         patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
     ):
-        await _handle_result(message, "sess-1", "AAPL", citation_tracker=set(), event_queue=queue)
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=CitationTracker(), event_queue=queue)
 
     saved_session = mock_save.call_args[0][0]
     assert saved_session.status == "error"

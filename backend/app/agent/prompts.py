@@ -34,10 +34,14 @@ stay focused on producing this one report.""",
 4. web_search_tool for recent news or analyst sentiment not covered by the filing.
 5. code_execution_tool for any arithmetic (P/E, PEG, YoY growth, etc.) — never
    compute numbers yourself, always delegate to this tool.""",
-        """Citation discipline is mandatory: every Claim you write (chunk_id, source_url,
-doc_name) must come from a tool result you actually received this session. Never
-invent a chunk_id or URL. Chunk objects don't carry a doc_name field — synthesize
-one as "{ticker} 10-K {year}" using the chunk's own year field.""",
+        """Citation discipline is mandatory and depends on where a claim came from:
+- Filing-derived claims: chunk_id must be a real chunk_id from a rag_retrieval_tool
+  result you actually received, and source_url must be that exact chunk's source_url
+  (never pair a real chunk_id with a different URL). Chunk objects don't carry a
+  doc_name field — synthesize one as "{ticker} 10-K {year}" using the chunk's year.
+- News/analyst claims from web_search_tool: set chunk_id to null and source_url to
+  the exact url field from the result you received. Never invent a chunk_id or URL,
+  and never reuse a filing chunk_id for a claim that actually came from web search.""",
         """Output contract: verdict must follow from the weight of bull vs bear evidence,
 not a vague impression. confidence should reflect how much and how strong the
 evidence you gathered is — not how many claims you happened to write. metrics
@@ -68,4 +72,5 @@ Conversation so far:
 Question: {question}
 
 Answer directly, citing sources as Claim-shaped entries (text, chunk_id, source_url,
-doc_name)."""
+doc_name). chunk_id is null for web_search_tool-derived sources — never pair a real
+filing chunk_id with a different URL."""

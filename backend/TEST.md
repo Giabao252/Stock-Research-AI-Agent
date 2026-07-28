@@ -1,4 +1,4 @@
-# Testing Guide
+# Testing Guide (LOCAL)
 
 Three tiers. Tier 1 and Tier 2 are what `pytest` runs — fully mocked, free, safe for CI. Tier 3 is manual, costs real API money, and has no pytest file at all.
 
@@ -39,6 +39,7 @@ Useful flags for local dev:
 ## What's not run automatically
 
 Tier 3 — a live `run_analysis("AAPL")` run, or a live `ingest_ticker("AAPL")` against real Qdrant Cloud — is deliberately not a pytest file. It costs real API money and depends on live credentials in `.env`. Run it by hand when you need to verify real behavior, e.g.:
+1. Ingest run
 
 ```bash
 .venv/bin/python -c "
@@ -53,6 +54,20 @@ async def main():
 
 asyncio.run(main())
 "
+```
+
+2. run_analysis() on AAPL
+```bash
+.venv/bin/python -c "
+import asyncio
+from app.agent.runner import run_analysis
+
+async def main():
+    async for event in run_analysis('AAPL'):
+        print(f'[{event.type}]', event.model_dump(exclude={'type'}))
+
+asyncio.run(main())
+" 2>&1
 ```
 
 ## CI/CD (Phase 7)
@@ -90,11 +105,14 @@ No secrets required for this step — Tier 1 and Tier 2 never touch real credent
 
 ## A note on what these tests already caught
 
-Writing this suite surfaced four real bugs before they hit a live run — worth remembering when deciding whether a "just write tests" pass is worth the time:
+Writing this suite, and running it, surfaced seven real bugs — worth remembering when deciding whether a "just write tests" pass, or an actual live run, is worth the time:
 
 1. `code_tool.py` read the wrong PrintCollector object/attribute, so `stdout_output` failed Pydantic validation on every call.
 2. `code_tool.py` was missing `_getitem_` in its restricted globals, so `context['key']` — the tool's own documented usage example — failed outright.
 3. `clients/qdrant.py` called `_client.search()`, which doesn't exist in the installed `qdrant-client` version (renamed `query_points()`, different response shape). This broke all of RAG retrieval.
 4. `clients/qdrant.py` never created payload indexes, and Qdrant Cloud's strict mode rejects filtering on an unindexed field. Fixed by making index creation part of `init_collections()`, idempotently, so it self-heals collections created before the fix existed.
+5. `code_tool.py` constructed `ExecutionResult(result=result, ...)` outside any try/except, so a non-scalar `result` (a dict, say — a very natural thing for the agent to try when computing several metrics at once) raised an uncaught `pydantic.ValidationError` straight through the MCP layer instead of a clean typed error.
+6. The citation-groundedness check (`agent/hooks.py`'s `citation_tracker`) only tracked *which chunk_ids were seen*, not *which source_url each one actually had*. A live run showed the model reusing a real, previously-seen filing chunk_id but pairing it with a fabricated external URL for a claim that actually came from `web_search_tool` — passing the old check while citing a source that was never retrieved. Fixed by tracking `(chunk_id → real source_url)` pairs and a separate seen-URLs set for news claims, and making `Claim.chunk_id` optional (`None` for web-search-derived claims, since `NewsResult` has no chunk to point to).
+7. The fix for #6 shipped with a bug of its own, caught immediately by the very next live run: `agent/hooks.py`'s `PostToolUse` hook assumed `tool_response` was a plain dict, but the real SDK delivers it as a JSON-encoded *string* with the payload nested one level under a `"result"` key (confirmed by capturing a raw hook call against the live server — nothing in the SDK's type stubs documents this, `tool_response` is typed as `Any`). Every mocked test had only ever exercised the assumed shape, so `chunk_sources`/`seen_urls` were silently always empty, and the live run showed *every single claim* in the report — including correctly-cited ones — flagged as ungrounded. Fixed with a `_parse_tool_response` normalization step (JSON-decode if string, unwrap `"result"` if present) that both plain-dict built-in tools and JSON-string MCP tools now go through.
 
-Tier 1/2 mocks caught the first two by exercising real call shapes. The fourth only surfaced because of an actual Tier 3 live run — mocks alone would have kept asserting against the wrong API indefinitely.
+Tier 1/2 mocks caught bugs 1, 2, and 5 by exercising real call shapes and non-happy-path inputs. Bugs 3, 4, 6, and 7 only surfaced because of actual Tier 3 live runs — mocks alone would have kept asserting against the wrong API, or the wrong notion of "grounded," or the wrong wire shape, indefinitely. #7 in particular is the sharpest example in this whole list: a mocked test can only ever verify code against the shape you *assumed* — it takes a real run to find out the assumption itself was wrong.

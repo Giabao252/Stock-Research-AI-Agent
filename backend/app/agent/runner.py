@@ -22,12 +22,12 @@ from claude_agent_sdk import (
     query,
 )
 
-from app.agent.hooks import make_post_tool_use_hook, make_pre_tool_use_hook
+from app.agent.hooks import CitationTracker, make_post_tool_use_hook, make_pre_tool_use_hook
 from app.agent.prompts import build_followup_prompt, build_system_prompt
 from app.clients import redis as redis_client
 from app.config import settings
 from app.models.api import Answer
-from app.models.report import ResearchReport
+from app.models.report import Claim, ResearchReport
 from app.models.session import DoneEvent, ErrorEvent, ObserveEvent, SessionState, StreamEvent, ThoughtEvent, ToolCallEvent
 
 MCP_SERVER_NAME = "stock-research"
@@ -67,11 +67,17 @@ async def _load_or_init_session(session_id: str, ticker: str) -> SessionState:
     )
 
 
+def _is_grounded(claim: Claim, citation_tracker: CitationTracker) -> bool:
+    if claim.chunk_id is not None:
+        return citation_tracker.chunk_sources.get(claim.chunk_id) == claim.source_url
+    return claim.source_url in citation_tracker.seen_urls
+
+
 async def _handle_result(
     message: ResultMessage,
     session_id: str,
     ticker: str,
-    citation_tracker: set[str],
+    citation_tracker: CitationTracker,
     event_queue: "asyncio.Queue",
 ) -> None:
     session = await _load_or_init_session(session_id, ticker)
@@ -85,7 +91,7 @@ async def _handle_result(
         return
 
     report = ResearchReport.model_validate(message.structured_output)
-    ungrounded = [c for c in report.bull_case + report.bear_case if c.chunk_id not in citation_tracker]
+    ungrounded = [c for c in report.bull_case + report.bear_case if not _is_grounded(c, citation_tracker)]
     if ungrounded and not report.partial:
         report = report.model_copy(
             update={
@@ -107,7 +113,7 @@ async def run_analysis(
 ) -> AsyncIterator[StreamEvent]:
     session_id = session_id or str(uuid.uuid4())
     event_queue: "asyncio.Queue" = asyncio.Queue()
-    citation_tracker: set[str] = set()
+    citation_tracker = CitationTracker()
 
     options = ClaudeAgentOptions(
         model=settings.claude_model,

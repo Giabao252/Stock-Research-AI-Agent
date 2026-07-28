@@ -103,6 +103,11 @@ def test_claim_requires_all_citation_fields():
         Claim(text="Revenue grew")  # missing chunk_id/source_url/doc_name
 
 
+def test_claim_chunk_id_accepts_none_for_news_derived_claims():
+    claim = Claim(text="Analyst raised price target", chunk_id=None, source_url="https://benzinga.com/x", doc_name="Benzinga")
+    assert claim.chunk_id is None
+
+
 # ---------------------------------------------------------------------------
 # models/api.py
 # ---------------------------------------------------------------------------
