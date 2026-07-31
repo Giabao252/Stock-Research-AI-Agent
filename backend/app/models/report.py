@@ -9,7 +9,7 @@ class ToolCall(BaseModel):
 
 class Claim(BaseModel):
     text: str
-    chunk_id: str
+    chunk_id: str | None  # None for claims sourced from web_search_tool (no persisted chunk)
     source_url: str
     doc_name: str
 
