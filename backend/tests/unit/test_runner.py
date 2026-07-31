@@ -313,6 +313,40 @@ async def test_answer_question_happy_path():
     assert mock_append.call_args_list[1].args == ("sess-1", "assistant", "The P/E is 30.")
 
 
+async def test_answer_question_filters_ungrounded_sources():
+    # Regression: caught live — answer_question wired no PostToolUse hook at all,
+    # so a fabricated-but-plausible source_url (e.g. a service's bare homepage,
+    # not a real page) sailed through unchecked. Now it wires the same
+    # CitationTracker/_is_grounded check run_analysis uses, filtering
+    # answer.sources down to only what a tool call actually returned.
+    session = make_session(status="done")
+    grounded = Claim(text="x", chunk_id="aaa", source_url="https://sec.gov/x", doc_name="AAPL 10-K 2024")
+    ungrounded = Claim(text="y", chunk_id=None, source_url="https://fabricated.example/y", doc_name="Fake")
+    answer = Answer(text="answer", sources=[grounded, ungrounded])
+    result_message = make_result_message(structured_output=answer.model_dump())
+
+    def fake_make_post_tool_use_hook(queue, tracker):
+        # Simulates what a real PostToolUse hook would have recorded during
+        # query()'s execution, before the ResultMessage arrives.
+        tracker.chunk_sources["aaa"] = "https://sec.gov/x"
+
+        async def noop_hook(input_data, tool_use_id, context):
+            return {}
+
+        return noop_hook
+
+    with (
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=session)),
+        patch("app.agent.runner.redis_client.append_message", new=AsyncMock()),
+        patch("app.agent.runner.query", new=make_fake_query([result_message])),
+        patch("app.agent.runner.make_post_tool_use_hook", new=fake_make_post_tool_use_hook),
+    ):
+        result = await answer_question("q", "AAPL", "sess-1")
+
+    assert len(result.sources) == 1
+    assert result.sources[0].chunk_id == "aaa"
+
+
 async def test_answer_question_raises_when_no_result_message():
     session = make_session(status="done")
 

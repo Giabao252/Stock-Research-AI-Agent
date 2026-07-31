@@ -160,13 +160,21 @@ async def answer_question(question: str, ticker: str, session_id: str) -> Answer
     if session is None:
         raise RunnerError(f"Session {session_id} not found")
 
+    citation_tracker = CitationTracker()
+    # No SSE stream for /ask, so this queue only exists to satisfy
+    # make_post_tool_use_hook's signature — nothing drains it.
+    unused_queue: "asyncio.Queue" = asyncio.Queue()
+
     options = ClaudeAgentOptions(
         model=settings.claude_model,
         mcp_servers=_mcp_servers(),
         allowed_tools=[f"mcp__{MCP_SERVER_NAME}__*"],
         output_format={"type": "json_schema", "schema": Answer.model_json_schema()},
         max_budget_usd=0.50,
-        hooks={"PreToolUse": [HookMatcher(hooks=[make_pre_tool_use_hook()])]},
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[make_pre_tool_use_hook()])],
+            "PostToolUse": [HookMatcher(hooks=[make_post_tool_use_hook(unused_queue, citation_tracker)])],
+        },
     )
 
     prompt = build_followup_prompt(question, ticker, session.messages)
@@ -181,6 +189,8 @@ async def answer_question(question: str, ticker: str, session_id: str) -> Answer
         raise RunnerError(f"Failed to answer question for {ticker}: {detail}")
 
     answer = Answer.model_validate(result.structured_output)
+    grounded_sources = [s for s in answer.sources if _is_grounded(s, citation_tracker)]
+    answer = answer.model_copy(update={"sources": grounded_sources})
 
     await redis_client.append_message(session_id, "user", question)
     await redis_client.append_message(session_id, "assistant", answer.text)
