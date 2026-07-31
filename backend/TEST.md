@@ -39,7 +39,13 @@ Useful flags for local dev:
 ## What's not run automatically
 
 Tier 3 — a live `run_analysis("AAPL")` run, or a live `ingest_ticker("AAPL")` against real Qdrant Cloud — is deliberately not a pytest file. It costs real API money and depends on live credentials in `.env`. Run it by hand when you need to verify real behavior, e.g.:
-1. Ingest run
+
+1. FastMCP server running:
+```bash
+fastmcp run app/mcp_servers/server.py --transport http --port 8001
+```
+
+2. Ingest run
 
 ```bash
 .venv/bin/python -c "
@@ -56,7 +62,7 @@ asyncio.run(main())
 "
 ```
 
-2. run_analysis() on AAPL
+3. run_analysis() on AAPL
 ```bash
 .venv/bin/python -c "
 import asyncio
