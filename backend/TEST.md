@@ -76,6 +76,237 @@ asyncio.run(main())
 " 2>&1
 ```
 
+## Tier 4 — API route testing (manual, server must be running)
+
+Tests the full HTTP layer: gateway, agent SSE stream, and reports endpoints.
+Requires the FastAPI server and the FastMCP server both running locally, and a
+populated `.env`.
+
+### Prerequisites
+
+**Terminal 1 — MCP server** (the agent calls this for tools):
+```bash
+cd backend
+set -a && source .env && set +a
+PYTHONPATH=. fastmcp run app/mcp_servers/server.py --transport http --port 8001
+```
+
+**Terminal 2 — FastAPI backend**:
+```bash
+cd backend
+set -a && source .env && set +a
+PYTHONPATH=. .venv/bin/uvicorn app.main:app --reload --port 8000
+```
+
+Verify startup: the uvicorn log should print `Application startup complete.` and
+Qdrant should log `Created collection filings` / `Created collection reports`
+(or nothing if they already exist — `init_collections` is idempotent).
+
+---
+
+### GET /health
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected:
+```json
+{"status": "ok", "model": "haiku"}
+```
+
+---
+
+### POST /analyze
+
+Creates a session and returns the `session_id`. The agent does **not** start yet —
+it starts when the SSE connection opens.
+
+```bash
+curl -s -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "AAPL"}' | python3 -m json.tool
+```
+
+Expected (session_id will differ):
+```json
+{
+    "session_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "ticker": "AAPL"
+}
+```
+
+Save the `session_id` for the next two steps:
+```bash
+SESSION_ID=$(curl -s -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "AAPL"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+echo "Session: $SESSION_ID"
+```
+
+---
+
+### GET /sessions/{session_id}/stream  ← the main event
+
+Opens the SSE connection and starts the agent. Events stream until a `done` or
+`error` event. Use `curl -N` (no buffering) so chunks print immediately:
+
+```bash
+curl -N "http://localhost:8000/sessions/$SESSION_ID/stream"
+```
+
+Expected output (one `data:` line per event, \n\n between each):
+```
+data: {"type":"thought","content":"I'll start by fetching live stock data for AAPL..."}
+
+data: {"type":"tool_call","tool":"stock_data_tool","args":{"ticker":"AAPL"}}
+
+data: {"type":"observe","summary":"stock_data_tool returned StockMetrics"}
+
+data: {"type":"tool_call","tool":"rag_retrieval_tool","args":{"query":"Apple revenue growth","ticker":"AAPL","top_k":5}}
+
+data: {"type":"observe","summary":"rag_retrieval_tool returned 5 chunk(s)"}
+
+data: {"type":"done","report_id":"3fa85f64-5717-4562-b3fc-2c963f66afa6"}
+```
+
+On `done`, the report has been persisted to Qdrant and the Redis session is cleared.
+On `error`, check the FastAPI terminal for the traceback — common causes: MCP server
+not running, or `ANTHROPIC_API_KEY` not in `.env`.
+
+---
+
+### POST /ask  (follow-up question)
+
+Only works while a session is **still in Redis** — i.e. either the stream is still
+running or you re-created the session before it expired. The easiest test is to
+start a new session and ask before the stream finishes:
+
+```bash
+# In one terminal, start a slow stream:
+SESSION_ID=$(curl -s -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "MSFT"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+
+curl -N "http://localhost:8000/sessions/$SESSION_ID/stream" &
+
+# In another terminal, ask a follow-up while the stream is live:
+curl -s -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d "{\"question\": \"What is MSFT's P/E ratio?\", \"ticker\": \"MSFT\", \"session_id\": \"$SESSION_ID\"}" \
+  | python3 -m json.tool
+```
+
+Expected shape:
+```json
+{
+    "text": "Microsoft's P/E ratio as of the latest data is ...",
+    "sources": [
+        {
+            "text": "...",
+            "chunk_id": "a1b2c3d4e5f6a7b8",
+            "source_url": "https://...",
+            "doc_name": "MSFT 10-K 2024"
+        }
+    ]
+}
+```
+
+---
+
+### DELETE /sessions/{session_id}
+
+```bash
+# Create a session, then immediately cancel it
+SESSION_ID=$(curl -s -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "NVDA"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+
+curl -s -o /dev/null -w "%{http_code}" \
+  -X DELETE "http://localhost:8000/sessions/$SESSION_ID"
+# → 204
+
+# Idempotent — deleting again still returns 204
+curl -s -o /dev/null -w "%{http_code}" \
+  -X DELETE "http://localhost:8000/sessions/$SESSION_ID"
+# → 204
+```
+
+---
+
+### GET /reports?ticker=AAPL
+
+Only returns results after at least one SSE stream has completed for this ticker
+(the report is persisted on `done`).
+
+```bash
+curl -s "http://localhost:8000/reports?ticker=AAPL" | python3 -m json.tool
+```
+
+Expected: a JSON array of `ResearchReport` objects, ordered oldest-first.
+Returns `[]` if no reports exist yet for this ticker.
+
+Pagination:
+```bash
+curl -s "http://localhost:8000/reports?ticker=AAPL&limit=2"
+```
+
+---
+
+### GET /reports/{report_id}
+
+`report_id` is the `session_id` returned from the `done` SSE event.
+
+```bash
+# Run a full analysis first, grab the report_id from the done event:
+REPORT_ID="<paste-report_id-from-done-event>"
+
+curl -s "http://localhost:8000/reports/$REPORT_ID" | python3 -m json.tool
+```
+
+Expected: a single `ResearchReport` JSON object with `bull_case`, `bear_case`,
+`verdict`, `confidence`, `metrics`, `tool_trace`, and `generated_at`.
+
+---
+
+### GET /chunks/{chunk_id}
+
+`chunk_id` is a 16-char hex string from any `Claim.chunk_id` in a report.
+This is what the frontend CitationDrawer uses to show the raw 10-K passage.
+
+```bash
+# Grab a chunk_id from a report's bull_case or bear_case:
+CHUNK_ID=$(curl -s "http://localhost:8000/reports/$REPORT_ID" \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['bull_case'][0]['chunk_id'])")
+
+curl -s "http://localhost:8000/chunks/$CHUNK_ID" | python3 -m json.tool
+```
+
+Expected:
+```json
+{
+    "chunk_id": "a1b2c3d4e5f6a7b8",
+    "text": "Apple's revenue for fiscal year 2024 increased 6 percent ...",
+    "ticker": "AAPL",
+    "section": "Item 7",
+    "year": 2024,
+    "source_url": "https://www.sec.gov/Archives/edgar/data/...",
+    "score": 0.0
+}
+```
+
+404 if the chunk_id doesn't exist in Qdrant (e.g. a web-search-derived claim
+where `chunk_id` is `null` in the report — don't pass those here).
+
+---
+
+### Interactive docs
+
+All endpoints are also explorable at **http://localhost:8000/docs** (Swagger UI)
+while the server is running. Useful for one-off manual tests without curl.
+
+---
+
 ## CI/CD (Phase 7)
 
 The test step in `.github/workflows/ci.yml` is just:

@@ -10,6 +10,11 @@ class AnalyzeRequest(BaseModel):
     ticker: str
 
 
+class AnalyzeResponse(BaseModel):
+    session_id: str
+    ticker: str
+
+
 class AskRequest(BaseModel):
     question: str
     ticker: str
