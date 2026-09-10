@@ -1,0 +1,23 @@
+# Virtual environment — never copy, we install fresh inside the image
+.venv/
+
+# Secrets — must come from Railway env vars, never baked into the image
+.env
+.env.*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Dev/test files — not needed at runtime
+tests/
+requirements-dev.txt
+*.md
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
