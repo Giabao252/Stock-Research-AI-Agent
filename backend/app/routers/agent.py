@@ -7,7 +7,9 @@ GET  /sessions/{session_id}/stream — hold-open SSE, streams StreamEvent until 
 POST /ask                          — one-shot follow-up question, returns Answer
 """
 
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import StreamingResponse
 
 from app.agent.runner import RunnerError, answer_question, run_analysis
@@ -17,6 +19,11 @@ from app.models.api import Answer, AskRequest
 from app.models.session import DoneEvent, ErrorEvent
 
 router = APIRouter()
+
+_SESSION_ID_PARAM = Path(
+    description="The session_id returned by POST /analyze",
+    json_schema_extra={"example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"},
+)
 
 # SSE headers that tell Railway's nginx proxy not to buffer the stream.
 # Without X-Accel-Buffering: no, nginx accumulates chunks and the client
@@ -29,7 +36,9 @@ _SSE_HEADERS = {
 
 
 @router.get("/sessions/{session_id}/stream")
-async def stream(session_id: str) -> StreamingResponse:
+async def stream(
+    session_id: Annotated[str, _SESSION_ID_PARAM],
+) -> StreamingResponse:
     """Stream the live reasoning chain for an in-progress analysis session.
 
     Opens the Agent SDK run, translates every AssistantMessage / hook callback

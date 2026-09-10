@@ -8,8 +8,9 @@ GET    /health               — liveness probe for Railway
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Path
 
 from app.clients import redis as redis_client
 from app.config import settings
@@ -17,6 +18,11 @@ from app.models.api import AnalyzeRequest, AnalyzeResponse
 from app.models.session import SessionState
 
 router = APIRouter()
+
+_SESSION_ID_PARAM = Path(
+    description="The session_id returned by POST /analyze",
+    json_schema_extra={"example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"},
+)
 
 
 @router.post("/analyze", response_model=AnalyzeResponse, status_code=202)
@@ -44,7 +50,9 @@ async def analyze(body: AnalyzeRequest) -> AnalyzeResponse:
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: str) -> None:
+async def delete_session(
+    session_id: Annotated[str, _SESSION_ID_PARAM],
+) -> None:
     """Delete a session record from Redis.
 
     Idempotent — returns 204 even if the session was already gone or expired.
