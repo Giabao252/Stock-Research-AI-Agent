@@ -58,13 +58,23 @@ async def init_collections() -> None:
 
     if REPORTS_COLLECTION not in existing:
         await _client.create_collection(
-            collection_name=REPORTS_COLLECTION,
+            collection_name=REPORTS_COLLECTION, 
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
 
+    # filings — indexed on ticker (scroll + dense filter) and section (dense filter)
     for field_name in ("ticker", "section"):
         await _client.create_payload_index(
             collection_name=FILINGS_COLLECTION,
+            field_name=field_name,
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+
+    # reports — indexed on ticker (get_reports_for_ticker scroll) and
+    # report_id (get_report_by_id scroll). Both filtered on every read.
+    for field_name in ("ticker", "report_id"):
+        await _client.create_payload_index(
+            collection_name=REPORTS_COLLECTION,
             field_name=field_name,
             field_schema=PayloadSchemaType.KEYWORD,
         )
