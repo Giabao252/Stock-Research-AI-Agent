@@ -1,0 +1,79 @@
+# Render Blueprint: two services built from the same backend image.
+#   stock-research-api  — public FastAPI (gateway + agent + reports routers)
+#   stock-research-mcp  — private FastMCP server, reachable only from the API
+#
+# Secrets are `sync: false`: Render prompts for them once when the Blueprint is
+# created and never stores them in git. Set them in the dashboard afterwards.
+
+services:
+  - type: web
+    name: stock-research-api
+    runtime: docker
+    plan: starter
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: CLAUDE_MODEL
+        value: haiku
+      # Render's private network resolves the service name as a hostname.
+      - key: MCP_SERVER_URL
+        value: http://stock-research-mcp:10000/mcp/
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SEC_USER_NAME
+        sync: false
+      - key: SEC_USER_EMAIL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: UPSTASH_REDIS_TOKEN
+        sync: false
+
+  - type: pserv
+    name: stock-research-mcp
+    runtime: docker
+    plan: starter
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    dockerCommand: fastmcp run app/mcp_servers/server.py --transport http --host 0.0.0.0 --port 10000
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "10000"
+      # Settings() requires this at import time; the MCP server never calls itself.
+      - key: MCP_SERVER_URL
+        value: http://localhost:10000/mcp/
+      - key: SEC_USER_NAME
+        sync: false
+      - key: SEC_USER_EMAIL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: UPSTASH_REDIS_TOKEN
+        sync: false

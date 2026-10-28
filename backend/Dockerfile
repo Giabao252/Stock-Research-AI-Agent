@@ -2,15 +2,17 @@
 # Runs identically in docker compose (local dev) and on Railway (production).
 # Railway's MCP-server service uses the same image but overrides the start command:
 #   fastmcp run app/mcp_servers/server.py --transport http --port $PORT
-FROM python:3.11.1-slim-bookworm
+FROM python:3.11-slim-bookworm
 
+# PYTHONPATH: the fastmcp CLI doesn't add the cwd to sys.path, so `import app` fails without it.
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
 # Apply OS-level CVE patches released after the base image was published,
-# and install curl (used by Docker's own health check probe).
+# and install curl (used by the compose health checks).
 RUN apt-get update \
  && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends curl \
@@ -24,7 +26,9 @@ RUN pip install --upgrade pip --no-cache-dir \
 COPY app/ ./app/
 
 # ── Least-privilege runtime user ───────────────────────────────────────────────
-RUN useradd --no-create-home --shell /bin/false appuser
+# Needs a real, writable HOME: the Agent SDK's bundled Claude CLI writes config/cache there.
+RUN useradd --create-home --home-dir /home/appuser --shell /bin/false appuser
+ENV HOME=/home/appuser
 USER appuser
 
 # Backend FastAPI app listens on 8000; Railway injects $PORT and overrides this.

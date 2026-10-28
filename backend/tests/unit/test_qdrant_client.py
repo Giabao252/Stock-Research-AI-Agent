@@ -91,10 +91,13 @@ async def test_init_collections_always_ensures_payload_indexes():
     ):
         await init_collections()
 
-    indexed_fields = {call.kwargs["field_name"] for call in mock_index.call_args_list}
-    assert indexed_fields == {"ticker", "section"}
-    for call in mock_index.call_args_list:
-        assert call.kwargs["collection_name"] == FILINGS_COLLECTION
+    indexed = {(call.kwargs["collection_name"], call.kwargs["field_name"]) for call in mock_index.call_args_list}
+    assert indexed == {
+        (FILINGS_COLLECTION, "ticker"),
+        (FILINGS_COLLECTION, "section"),
+        (REPORTS_COLLECTION, "ticker"),
+        (REPORTS_COLLECTION, "report_id"),
+    }
 
 
 # ---------------------------------------------------------------------------
