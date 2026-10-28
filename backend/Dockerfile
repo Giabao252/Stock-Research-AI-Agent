@@ -16,15 +16,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/*
 
-# ── Python deps ────────────────────────────────────────────────────────────────
-# Copied before app source so Docker caches this layer independently.
-# The layer is only rebuilt when requirements.txt actually changes.
 COPY requirements.txt .
 RUN pip install --upgrade pip --no-cache-dir \
  && pip install --no-cache-dir -r requirements.txt
 
-# ── Application source ─────────────────────────────────────────────────────────
-# .dockerignore excludes .venv, __pycache__, .env, tests/, etc.
+
 COPY app/ ./app/
 
 # ── Least-privilege runtime user ───────────────────────────────────────────────
