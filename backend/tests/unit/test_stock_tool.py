@@ -153,3 +153,64 @@ async def test_stock_data_tool_premium_overview_with_unusable_eps_still_returns_
     assert isinstance(result, StockMetrics)
     assert result.eps == -1.0
     assert result.pe_ratio is None
+
+
+async def test_fundamentals_cache_hit_skips_overview_and_earnings():
+    from app.mcp_servers.stock_tool import Fundamentals
+
+    cached = Fundamentals(eps=8.0, market_cap=3e12, derive_pe=False, pe_ratio=25.0)
+
+    async def fake_get(key):
+        return cached.model_dump_json() if key == "fundamentals:AAPL" else None
+
+    overview, earnings = AsyncMock(), AsyncMock()
+    with (
+        patch("app.mcp_servers.stock_tool.redis_client.get_cached", new=fake_get),
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),
+        patch("app.mcp_servers.stock_tool.get_overview", new=overview),
+        patch("app.mcp_servers.stock_tool.get_ttm_eps", new=earnings),
+    ):
+        result = await stock_data_tool("AAPL")
+
+    assert result.market_cap == 3e12 and result.pe_ratio == 25.0
+    overview.assert_not_awaited()
+    earnings.assert_not_awaited()
+
+
+async def test_cached_earnings_fundamentals_rederive_pe_from_live_price():
+    from app.mcp_servers.stock_tool import Fundamentals
+
+    cached = Fundamentals(eps=8.0, derive_pe=True)
+
+    async def fake_get(key):
+        return cached.model_dump_json() if key == "fundamentals:AAPL" else None
+
+    with (
+        patch("app.mcp_servers.stock_tool.redis_client.get_cached", new=fake_get),
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),  # price 200
+    ):
+        result = await stock_data_tool("AAPL")
+
+    assert result.pe_ratio == 25.0
+
+
+async def test_fundamentals_cached_for_24h_and_failures_not_cached():
+    from app.mcp_servers.stock_tool import FUNDAMENTALS_CACHE_TTL_SECONDS
+
+    with (
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),
+        patch("app.mcp_servers.stock_tool.get_overview", new=AsyncMock(return_value=make_overview())),
+        patch("app.mcp_servers.stock_tool.redis_client.set_cached", new=AsyncMock()) as mock_set,
+    ):
+        await stock_data_tool("AAPL")
+    keys = {c[0][0]: c[0][2] for c in mock_set.call_args_list}
+    assert keys["fundamentals:AAPL"] == FUNDAMENTALS_CACHE_TTL_SECONDS
+
+    with (
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),
+        patch("app.mcp_servers.stock_tool.get_overview", new=AsyncMock(side_effect=RuntimeError("rate limited"))),
+        patch("app.mcp_servers.stock_tool.redis_client.set_cached", new=AsyncMock()) as mock_set,
+    ):
+        result = await stock_data_tool("AAPL")
+    assert isinstance(result, ToolError)
+    mock_set.assert_not_awaited()
