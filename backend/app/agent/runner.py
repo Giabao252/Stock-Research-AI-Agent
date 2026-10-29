@@ -10,7 +10,7 @@ Public API:
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from claude_agent_sdk import (
@@ -126,7 +126,7 @@ async def _handle_result(
     if not metrics:
         reasons.append("stock_data_tool returned no data, so market metrics are unavailable")
 
-    update: dict = {"metrics": metrics, "generated_at": datetime.utcnow()}
+    update: dict = {"metrics": metrics, "generated_at": datetime.now(timezone.utc)}
     if reasons and not report.partial:
         update.update(partial=True, partial_reason="; ".join(reasons))
     report = report.model_copy(update=update)

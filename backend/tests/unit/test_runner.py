@@ -9,7 +9,7 @@ live SDK. Redis is always mocked. No network calls, no API spend.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -308,7 +308,8 @@ async def test_handle_result_overwrites_model_metrics_with_stock_tool_data():
 
     saved_report = mock_save.call_args[0][0].partial_report
     assert saved_report.metrics == {"ticker": "AAPL", "price": 200.0}
-    assert saved_report.generated_at > datetime(2026, 6, 1)  # server timestamp, not the model's
+    assert saved_report.generated_at > datetime(2026, 6, 1, tzinfo=timezone.utc)  # server timestamp, not the model's
+    assert saved_report.generated_at.tzinfo is not None
 
 
 async def test_handle_result_marks_partial_when_stock_data_missing():

@@ -14,6 +14,8 @@ Public API — reports collection:
     get_report_by_id(report_id: str)                          -> ResearchReport | None
 """
 
+from datetime import timezone
+
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
@@ -213,7 +215,9 @@ async def get_reports_for_ticker(ticker: str, limit: int = 5) -> list[ResearchRe
         with_vectors=False,
     )
     reports = [ResearchReport.model_validate(r.payload) for r in results]
-    reports.sort(key=lambda r: r.generated_at)
+    # Stored timestamps are a mix of tz-aware and naive values; comparing them raises
+    # TypeError, so treat naive ones as UTC for ordering.
+    reports.sort(key=lambda r: r.generated_at if r.generated_at.tzinfo else r.generated_at.replace(tzinfo=timezone.utc))
     return reports
 
 

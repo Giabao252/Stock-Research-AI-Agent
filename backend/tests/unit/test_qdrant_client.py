@@ -13,6 +13,7 @@ from app.clients.qdrant import (
     FILINGS_COLLECTION,
     REPORTS_COLLECTION,
     VECTOR_SIZE,
+    get_reports_for_ticker,
     init_collections,
     query_dense,
     upsert_chunks,
@@ -205,3 +206,29 @@ async def test_query_dense_passes_vector_as_query_kwarg():
         await query_dense(vector, ticker="AAPL")
 
     assert mock_query.call_args.kwargs["query"] == vector
+
+
+# ---------------------------------------------------------------------------
+# get_reports_for_ticker
+# ---------------------------------------------------------------------------
+
+def make_report_payload(generated_at: str) -> dict:
+    return {
+        "ticker": "NVDA", "bull_case": [], "bear_case": [], "verdict": "neutral", "confidence": 0.5,
+        "tool_trace": [], "metrics": {}, "partial": False, "partial_reason": None,
+        "generated_at": generated_at, "report_id": "x",
+    }
+
+
+async def test_get_reports_for_ticker_sorts_mixed_naive_and_aware_timestamps():
+    # Regression: model-written reports carry "...Z" (tz-aware) while server-stamped ones
+    # were naive; sorting the mix raised TypeError and 500'd GET /reports and every
+    # analysis start for that ticker.
+    points = [
+        SimpleNamespace(payload=make_report_payload("2026-10-29T02:10:07.662971")),   # naive, newer
+        SimpleNamespace(payload=make_report_payload("2026-10-29T00:00:00Z")),          # aware, older
+    ]
+    with patch("app.clients.qdrant._client.scroll", new=AsyncMock(return_value=(points, None))):
+        reports = await get_reports_for_ticker("NVDA")
+
+    assert [r.generated_at.isoformat()[:19] for r in reports] == ["2026-10-29T00:00:00", "2026-10-29T02:10:07"]
