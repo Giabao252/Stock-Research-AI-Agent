@@ -51,6 +51,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      # Image names must be lowercase; the GitHub username may not be.
+      - name: Compute image name
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE=ghcr.io/${owner}/stock-research-backend" >> "$GITHUB_ENV"
       - name: Log in to ghcr.io
         if: github.event_name == 'push'
         uses: docker/login-action@v3
@@ -64,7 +69,7 @@ jobs:
           # Build on PRs to catch Dockerfile breakage; push only from main.
           push: ${{ github.event_name == 'push' }}
           tags: |
-            ghcr.io/Giabao252/stock-research-backend:latest
-            ghcr.io/Giabao252/stock-research-backend:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
