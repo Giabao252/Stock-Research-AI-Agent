@@ -93,6 +93,10 @@ async def _get(function: str, symbol: str) -> dict:
     # Alpha Vantage signals rate-limiting or auth failure via these keys instead of HTTP 4xx
     if "Note" in data or "Information" in data:
         msg = data.get("Note") or data.get("Information", "Unknown Alpha Vantage error")
+        # The upstream message can echo the API key back ("We have detected your API key as ...");
+        # errors flow to the SSE stream, so it must not leak.
+        if settings.alpha_vantage_key:
+            msg = msg.replace(settings.alpha_vantage_key, "[redacted]")
         raise AlphaVantageError(f"Alpha Vantage error: {msg}")
 
     return data

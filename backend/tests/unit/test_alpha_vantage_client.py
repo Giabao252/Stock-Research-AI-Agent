@@ -180,3 +180,17 @@ async def test_concurrent_requests_are_spaced_by_min_interval(monkeypatch):
 
     assert len(call_times) == 2
     assert call_times[1] - call_times[0] >= 0.19
+
+
+async def test_get_redacts_api_key_echoed_in_error_message(monkeypatch):
+    monkeypatch.setattr(alpha_vantage.settings, "alpha_vantage_key", "SECRETKEY123")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"Information": "We have detected your API key as SECRETKEY123 and the limit is 25/day."}
+
+    with patch("app.clients.alpha_vantage._http_client.get", new=AsyncMock(return_value=resp)):
+        with pytest.raises(AlphaVantageError) as exc_info:
+            await get_quote("AAPL")
+
+    assert "SECRETKEY123" not in str(exc_info.value)
+    assert "[redacted]" in str(exc_info.value)
