@@ -27,6 +27,10 @@ class AlphaVantageError(Exception):
     """Raised when Alpha Vantage returns a rate-limit or auth error response."""
 
 
+class AlphaVantagePremiumError(AlphaVantageError):
+    """Raised when the endpoint is not available on the free plan."""
+
+
 class AlphaVantageTickerNotFound(Exception):
     """Raised when Alpha Vantage returns no data for the given ticker."""
 
@@ -97,7 +101,8 @@ async def _get(function: str, symbol: str) -> dict:
         # errors flow to the SSE stream, so it must not leak.
         if settings.alpha_vantage_key:
             msg = msg.replace(settings.alpha_vantage_key, "[redacted]")
-        raise AlphaVantageError(f"Alpha Vantage error: {msg}")
+        error_cls = AlphaVantagePremiumError if "premium endpoint" in msg.lower() else AlphaVantageError
+        raise error_cls(f"Alpha Vantage error: {msg}")
 
     return data
 
@@ -175,3 +180,17 @@ async def get_overview(ticker: str) -> CompanyOverview:
 
     _overview_cache[upper] = (overview, time.time())
     return overview
+
+
+async def get_ttm_eps(ticker: str) -> float | None:
+    """Trailing-twelve-month EPS: the sum of the last four reported quarters.
+
+    Uses the EARNINGS endpoint, which (unlike OVERVIEW) is on the free plan. Returns None
+    when fewer than four quarters of data are available.
+    """
+    data = await _get("EARNINGS", ticker.upper())
+    quarters = data.get("quarterlyEarnings") or []
+    eps = [_parse_float(q.get("reportedEPS")) for q in quarters[:4]]
+    if len(eps) < 4 or any(v is None for v in eps):
+        return None
+    return round(sum(eps), 4)

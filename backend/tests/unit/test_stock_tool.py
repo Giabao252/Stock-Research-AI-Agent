@@ -121,3 +121,35 @@ async def test_stock_data_tool_skips_overview_when_quote_fails():
         await stock_data_tool("AAPL")
 
     mock_overview.assert_not_awaited()
+
+
+async def test_stock_data_tool_falls_back_to_earnings_when_overview_is_premium():
+    from app.clients.alpha_vantage import AlphaVantagePremiumError
+
+    with (
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),
+        patch("app.mcp_servers.stock_tool.get_overview", new=AsyncMock(side_effect=AlphaVantagePremiumError("premium"))),
+        patch("app.mcp_servers.stock_tool.get_ttm_eps", new=AsyncMock(return_value=8.0)),
+    ):
+        result = await stock_data_tool("AAPL")
+
+    assert isinstance(result, StockMetrics)
+    assert result.price == 200.0
+    assert result.eps == 8.0
+    assert result.pe_ratio == 25.0
+    assert result.market_cap is None and result.revenue_ttm is None
+
+
+async def test_stock_data_tool_premium_overview_with_unusable_eps_still_returns_quote():
+    from app.clients.alpha_vantage import AlphaVantagePremiumError
+
+    with (
+        patch("app.mcp_servers.stock_tool.get_quote", new=AsyncMock(return_value=make_quote())),
+        patch("app.mcp_servers.stock_tool.get_overview", new=AsyncMock(side_effect=AlphaVantagePremiumError("premium"))),
+        patch("app.mcp_servers.stock_tool.get_ttm_eps", new=AsyncMock(return_value=-1.0)),
+    ):
+        result = await stock_data_tool("AAPL")
+
+    assert isinstance(result, StockMetrics)
+    assert result.eps == -1.0
+    assert result.pe_ratio is None

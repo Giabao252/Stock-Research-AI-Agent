@@ -194,3 +194,25 @@ async def test_get_redacts_api_key_echoed_in_error_message(monkeypatch):
 
     assert "SECRETKEY123" not in str(exc_info.value)
     assert "[redacted]" in str(exc_info.value)
+
+
+async def test_get_raises_premium_error_for_premium_endpoint_message():
+    body = {"Information": "Thank you! This is a premium endpoint. You may subscribe..."}
+    response = AsyncMock()
+    response.json = lambda: body
+    response.raise_for_status = lambda: None
+    with patch("app.clients.alpha_vantage._http_client.get", new=AsyncMock(return_value=response)):
+        with pytest.raises(alpha_vantage.AlphaVantagePremiumError):
+            await alpha_vantage._get("OVERVIEW", "AAPL")
+
+
+async def test_get_ttm_eps_sums_last_four_quarters():
+    data = {"quarterlyEarnings": [{"reportedEPS": "2.0"}, {"reportedEPS": "1.5"}, {"reportedEPS": "1.0"}, {"reportedEPS": "0.5"}, {"reportedEPS": "9"}]}
+    with patch("app.clients.alpha_vantage._get", new=AsyncMock(return_value=data)):
+        assert await alpha_vantage.get_ttm_eps("AAPL") == 5.0
+
+
+async def test_get_ttm_eps_none_when_data_incomplete():
+    data = {"quarterlyEarnings": [{"reportedEPS": "2.0"}, {"reportedEPS": "None"}, {"reportedEPS": "1.0"}, {"reportedEPS": "0.5"}]}
+    with patch("app.clients.alpha_vantage._get", new=AsyncMock(return_value=data)):
+        assert await alpha_vantage.get_ttm_eps("AAPL") is None
