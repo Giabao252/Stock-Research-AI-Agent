@@ -8,6 +8,7 @@ Public API:
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 from typing import AsyncIterator
@@ -17,6 +18,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     HookMatcher,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     ToolUseBlock,
     query,
@@ -30,8 +32,14 @@ from app.models.api import Answer
 from app.models.report import Claim, ResearchReport
 from app.models.session import DoneEvent, ErrorEvent, ObserveEvent, SessionState, StreamEvent, ThoughtEvent, ToolCallEvent
 
+logger = logging.getLogger(__name__)
+
 MCP_SERVER_NAME = "stock-research"
 _SENTINEL = object()
+
+# Built-in web tools would let the agent bypass the MCP tools (and their citations)
+# if the MCP server is unreachable — research must only come from MCP tools.
+_DISALLOWED_TOOLS = ["WebSearch", "WebFetch"]
 
 
 class RunnerError(Exception):
@@ -40,6 +48,22 @@ class RunnerError(Exception):
 
 def _mcp_servers() -> dict:
     return {MCP_SERVER_NAME: {"type": "http", "url": settings.mcp_server_url}}
+
+
+def _mcp_connection_error(message: SystemMessage) -> str | None:
+    """Return an error string if the init message reports our MCP server as unusable."""
+    if message.subtype != "init":
+        return None
+    for server in message.data.get("mcp_servers", []):
+        if server.get("name") != MCP_SERVER_NAME:
+            continue
+        status = server.get("status")
+        if status != "connected":
+            logger.warning("MCP server %r status=%s error=%s", MCP_SERVER_NAME, status, server.get("error"))
+        if status in ("failed", "needs-auth"):
+            detail = server.get("error") or status
+            return f"MCP server '{MCP_SERVER_NAME}' is unavailable: {detail}"
+    return None
 
 
 def _translate_assistant_message(message: AssistantMessage) -> list[StreamEvent]:
@@ -120,6 +144,7 @@ async def run_analysis(
         system_prompt=build_system_prompt(ticker, prior_reports),
         mcp_servers=_mcp_servers(),
         allowed_tools=[f"mcp__{MCP_SERVER_NAME}__*"],
+        disallowed_tools=_DISALLOWED_TOOLS,
         output_format={"type": "json_schema", "schema": ResearchReport.model_json_schema()},
         max_budget_usd=0.50,
         hooks={
@@ -134,7 +159,12 @@ async def run_analysis(
                 prompt=f"Research {ticker} and produce a bull/bear ResearchReport.",
                 options=options,
             ):
-                if isinstance(message, AssistantMessage):
+                if isinstance(message, SystemMessage):
+                    mcp_error = _mcp_connection_error(message)
+                    if mcp_error:
+                        await event_queue.put(ErrorEvent(message=mcp_error))
+                        break
+                elif isinstance(message, AssistantMessage):
                     for event in _translate_assistant_message(message):
                         await event_queue.put(event)
                 elif isinstance(message, ResultMessage):
@@ -169,6 +199,7 @@ async def answer_question(question: str, ticker: str, session_id: str) -> Answer
         model=settings.claude_model,
         mcp_servers=_mcp_servers(),
         allowed_tools=[f"mcp__{MCP_SERVER_NAME}__*"],
+        disallowed_tools=_DISALLOWED_TOOLS,
         output_format={"type": "json_schema", "schema": Answer.model_json_schema()},
         max_budget_usd=0.50,
         hooks={

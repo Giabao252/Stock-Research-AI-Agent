@@ -13,10 +13,10 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, ToolUseBlock
 
 from app.agent.hooks import CitationTracker
-from app.agent.runner import RunnerError, _handle_result, _is_grounded, _load_or_init_session, answer_question, run_analysis
+from app.agent.runner import MCP_SERVER_NAME, RunnerError, _handle_result, _is_grounded, _load_or_init_session, answer_question, run_analysis
 from app.models.api import Answer
 from app.models.report import Claim, ResearchReport
 from app.models.session import DoneEvent, ErrorEvent, SessionState, ThoughtEvent, ToolCallEvent
@@ -145,6 +145,49 @@ async def test_run_analysis_translates_text_and_tool_use_blocks():
     assert events[1].args == {"ticker": "AAPL"}
     assert isinstance(events[-1], DoneEvent)
     assert events[-1].report_id == "sess-1"
+
+
+def make_init_message(status: str, error: str | None = None) -> SystemMessage:
+    server = {"name": MCP_SERVER_NAME, "status": status}
+    if error:
+        server["error"] = error
+    return SystemMessage(subtype="init", data={"mcp_servers": [server]})
+
+
+async def test_run_analysis_stops_with_error_when_mcp_server_failed():
+    messages = [
+        make_init_message("failed", error="HTTP 421"),
+        make_assistant_message([TextBlock(text="should never be reached")]),
+    ]
+
+    with (
+        patch("app.agent.runner.query", new=make_fake_query(messages)),
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()),
+    ):
+        events = [event async for event in run_analysis("AAPL", session_id="sess-1")]
+
+    assert len(events) == 1
+    assert isinstance(events[0], ErrorEvent)
+    assert "HTTP 421" in events[0].message
+
+
+async def test_run_analysis_continues_when_mcp_server_connected():
+    messages = [
+        make_init_message("connected"),
+        make_assistant_message([TextBlock(text="Let's start.")]),
+        make_result_message(structured_output=make_report().model_dump()),
+    ]
+
+    with (
+        patch("app.agent.runner.query", new=make_fake_query(messages)),
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()),
+    ):
+        events = [event async for event in run_analysis("AAPL", session_id="sess-1")]
+
+    assert isinstance(events[0], ThoughtEvent)
+    assert isinstance(events[-1], DoneEvent)
 
 
 async def test_run_analysis_saves_report_on_success():
