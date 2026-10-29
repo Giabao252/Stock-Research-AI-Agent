@@ -19,7 +19,7 @@ services:
         value: haiku
       # Render's private network resolves the service name as a hostname.
       - key: MCP_SERVER_URL
-        value: http://stock-research-mcp:10000/mcp/
+        value: http://stock-research-mcp:10000/mcp
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: SEC_USER_NAME
@@ -54,9 +54,13 @@ services:
     envVars:
       - key: PORT
         value: "10000"
+      # FastMCP rejects any Host header outside localhost with 421 unless allow-listed.
+      # The API reaches this service as `stock-research-mcp`, so it must be listed.
+      - key: FASTMCP_HTTP_ALLOWED_HOSTS
+        value: '["stock-research-mcp"]'
       # Settings() requires this at import time; the MCP server never calls itself.
       - key: MCP_SERVER_URL
-        value: http://localhost:10000/mcp/
+        value: http://localhost:10000/mcp
       - key: SEC_USER_NAME
         sync: false
       - key: SEC_USER_EMAIL
