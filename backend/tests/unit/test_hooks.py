@@ -334,3 +334,31 @@ async def test_post_tool_use_leaves_tracker_untouched_for_non_chunk_shape():
 
     assert tracker.chunk_sources == {"pre-existing": "https://sec.gov/pre"}
     assert tracker.seen_urls == set()
+
+
+async def test_post_tool_use_captures_successful_stock_data_payload():
+    queue, tracker = asyncio.Queue(), CitationTracker()
+    hook = make_post_tool_use_hook(queue, tracker)
+    payload = {"ticker": "AAPL", "price": 200.0, "pe_ratio": 30.0}
+
+    await hook(
+        {"tool_name": "mcp__stock-research__stock_data_tool", "tool_response": json.dumps({"result": payload})},
+        "tool-use-1",
+        None,
+    )
+
+    assert tracker.stock_metrics == payload
+
+
+async def test_post_tool_use_ignores_failed_stock_data_call():
+    queue, tracker = asyncio.Queue(), CitationTracker()
+    hook = make_post_tool_use_hook(queue, tracker)
+    error = {"tool": "stock-data-tool", "message": "rate limited"}
+
+    await hook(
+        {"tool_name": "mcp__stock-research__stock_data_tool", "tool_response": json.dumps({"result": error})},
+        "tool-use-1",
+        None,
+    )
+
+    assert tracker.stock_metrics is None

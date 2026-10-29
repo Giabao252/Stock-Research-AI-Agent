@@ -244,6 +244,7 @@ async def test_handle_result_grounded_filing_claim_stays_not_partial():
 
     tracker = CitationTracker()
     tracker.chunk_sources["aaa"] = "https://sec.gov/x"
+    tracker.stock_metrics = {"ticker": "AAPL", "price": 200.0}
 
     with (
         patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
@@ -280,6 +281,7 @@ async def test_handle_result_grounded_news_claim_stays_not_partial():
 
     tracker = CitationTracker()
     tracker.seen_urls.add("https://benzinga.com/real")
+    tracker.stock_metrics = {"ticker": "AAPL", "price": 200.0}
 
     with (
         patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
@@ -289,6 +291,39 @@ async def test_handle_result_grounded_news_claim_stays_not_partial():
 
     saved_report = mock_save.call_args[0][0].partial_report
     assert saved_report.partial is False
+
+
+async def test_handle_result_overwrites_model_metrics_with_stock_tool_data():
+    report = make_report().model_copy(update={"metrics": {"price": 999, "pe": "from a web snippet"}})
+    message = make_result_message(structured_output=report.model_dump())
+
+    tracker = CitationTracker()
+    tracker.stock_metrics = {"ticker": "AAPL", "price": 200.0}
+
+    with (
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
+    ):
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=tracker, event_queue=asyncio.Queue())
+
+    saved_report = mock_save.call_args[0][0].partial_report
+    assert saved_report.metrics == {"ticker": "AAPL", "price": 200.0}
+    assert saved_report.generated_at > datetime(2026, 6, 1)  # server timestamp, not the model's
+
+
+async def test_handle_result_marks_partial_when_stock_data_missing():
+    message = make_result_message(structured_output=make_report().model_dump())
+
+    with (
+        patch("app.agent.runner.redis_client.get_session", new=AsyncMock(return_value=None)),
+        patch("app.agent.runner.redis_client.save_session", new=AsyncMock()) as mock_save,
+    ):
+        await _handle_result(message, "sess-1", "AAPL", citation_tracker=CitationTracker(), event_queue=asyncio.Queue())
+
+    saved_report = mock_save.call_args[0][0].partial_report
+    assert saved_report.metrics == {}
+    assert saved_report.partial is True
+    assert "stock_data_tool" in saved_report.partial_reason
 
 
 async def test_handle_result_error_message_sets_session_error_status():

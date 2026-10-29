@@ -6,12 +6,18 @@ Public API:
     save_session(session: SessionState)                -> None
     delete_session(session_id: str)                     -> None
     append_message(session_id, role, content)           -> None
+    get_cached(key)                                     -> str | None   (best-effort)
+    set_cached(key, value, ttl_seconds)                 -> None         (best-effort)
 """
+
+import logging
 
 from upstash_redis.asyncio import Redis
 
 from app.config import settings
 from app.models.session import SessionState
+
+logger = logging.getLogger(__name__)
 
 SESSION_TTL_SECONDS = 3600  # safety-net expiry; DELETE /sessions/{id} clears it explicitly
 MAX_BUFFERED_MESSAGES = 8
@@ -72,3 +78,24 @@ async def append_message(session_id: str, role: str, content: str) -> None:
     session.messages.append({"role": role, "content": content})
     session.messages = session.messages[-MAX_BUFFERED_MESSAGES:]
     await save_session(session)
+
+
+async def get_cached(key: str) -> str | None:
+    """Return a cached string, or None on a miss.
+
+    Best-effort: a Redis failure is logged and treated as a miss, because a cache
+    outage must never break the caller.
+    """
+    try:
+        return await _client.get(f"cache:{key}")
+    except Exception as exc:
+        logger.warning("Cache read failed for %s: %s", key, exc)
+        return None
+
+
+async def set_cached(key: str, value: str, ttl_seconds: int) -> None:
+    """Store a string with a TTL. Best-effort, like get_cached."""
+    try:
+        await _client.set(f"cache:{key}", value, ex=ttl_seconds)
+    except Exception as exc:
+        logger.warning("Cache write failed for %s: %s", key, exc)

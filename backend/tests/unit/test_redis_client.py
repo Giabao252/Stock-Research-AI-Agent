@@ -15,7 +15,9 @@ from app.clients.redis import (
     RedisSessionError,
     append_message,
     delete_session,
+    get_cached,
     get_session,
+    set_cached,
     save_session,
 )
 from app.models.session import SessionState
@@ -125,3 +127,29 @@ async def test_append_message_truncates_to_last_8_turns():
     assert len(saved.messages) == MAX_BUFFERED_MESSAGES
     assert saved.messages[-1]["content"] == "new message"
     assert saved.messages[0]["content"] == "1"  # oldest ("0") dropped
+
+
+# ---------------------------------------------------------------------------
+# get_cached / set_cached — best-effort, never raise
+# ---------------------------------------------------------------------------
+
+async def test_get_cached_returns_value():
+    with patch("app.clients.redis._client.get", new=AsyncMock(return_value="v")) as mock_get:
+        assert await get_cached("k") == "v"
+    mock_get.assert_awaited_once_with("cache:k")
+
+
+async def test_get_cached_returns_none_on_redis_failure():
+    with patch("app.clients.redis._client.get", new=AsyncMock(side_effect=RuntimeError("down"))):
+        assert await get_cached("k") is None
+
+
+async def test_set_cached_passes_ttl():
+    with patch("app.clients.redis._client.set", new=AsyncMock()) as mock_set:
+        await set_cached("k", "v", 60)
+    mock_set.assert_awaited_once_with("cache:k", "v", ex=60)
+
+
+async def test_set_cached_swallows_redis_failure():
+    with patch("app.clients.redis._client.set", new=AsyncMock(side_effect=RuntimeError("down"))):
+        await set_cached("k", "v", 60)  # must not raise

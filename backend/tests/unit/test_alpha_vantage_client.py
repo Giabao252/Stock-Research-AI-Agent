@@ -155,3 +155,28 @@ async def test_get_raises_alpha_vantage_error_on_information_key():
     with patch("app.clients.alpha_vantage._http_client.get", new=AsyncMock(return_value=resp)):
         with pytest.raises(AlphaVantageError):
             await get_overview("AAPL")
+
+
+async def test_concurrent_requests_are_spaced_by_min_interval(monkeypatch):
+    # Regression: stock_data_tool used to gather get_quote + get_overview, firing two
+    # requests in the same instant and tripping Alpha Vantage's 1 request/second limit.
+    import asyncio
+
+    monkeypatch.setattr(alpha_vantage, "MIN_REQUEST_INTERVAL", 0.2)
+    monkeypatch.setattr(alpha_vantage, "_last_request_at", 0.0)
+    call_times: list[float] = []
+
+    async def fake_get(*args, **kwargs):
+        call_times.append(time.monotonic())
+        response = MagicMock()
+        response.json.return_value = {"ok": 1}
+        return response
+
+    with patch("app.clients.alpha_vantage._http_client.get", new=fake_get):
+        await asyncio.gather(
+            alpha_vantage._get("GLOBAL_QUOTE", "AAPL"),
+            alpha_vantage._get("OVERVIEW", "AAPL"),
+        )
+
+    assert len(call_times) == 2
+    assert call_times[1] - call_times[0] >= 0.19

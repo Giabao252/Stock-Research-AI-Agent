@@ -44,8 +44,9 @@ stay focused on producing this one report.""",
   and never reuse a filing chunk_id for a claim that actually came from web search.""",
         """Output contract: verdict must follow from the weight of bull vs bear evidence,
 not a vague impression. confidence should reflect how much and how strong the
-evidence you gathered is — not how many claims you happened to write. metrics
-should be populated directly from stock_data_tool's result.""",
+evidence you gathered is — not how many claims you happened to write. Leave metrics
+as an empty object and generated_at as any value: the server fills both in from
+stock_data_tool's real result. Never put numbers from web search into metrics.""",
         """If the evidence you can find is missing or ambiguous on a material point, set
 partial=True and write a real partial_reason explaining the gap. Do not paper
 over missing data with a confident-sounding claim.""",

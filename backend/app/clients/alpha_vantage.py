@@ -5,10 +5,12 @@ Public API:
     get_quote(ticker)    -> StockQuote
     get_overview(ticker) -> CompanyOverview
 
-Free tier: 25 requests/day, 5 requests/minute.
+Free tier: 25 requests/day, 1 request/second burst.
+Requests are serialized with a minimum spacing to respect the burst limit.
 OVERVIEW responses are cached in memory for 1 hour to stay within the daily limit.
 """
 
+import asyncio
 import time
 
 import httpx
@@ -18,6 +20,7 @@ from app.config import settings
 
 BASE_URL = "https://www.alphavantage.co/query"
 OVERVIEW_CACHE_TTL = 3600.0  # 1 hour
+MIN_REQUEST_INTERVAL = 1.2  # seconds between requests; free tier allows 1/sec
 
 
 class AlphaVantageError(Exception):
@@ -59,18 +62,31 @@ _http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
 _overview_cache: dict[str, tuple[CompanyOverview, float]] = {}
 
 
+# Serializes outgoing requests so two concurrent calls never hit the 1/sec burst limit.
+_request_lock = asyncio.Lock()
+_last_request_at = 0.0
+
+
 # Private helpers
 
 
 async def _get(function: str, symbol: str) -> dict:
-    response = await _http_client.get(
-        BASE_URL,
-        params={
-            "function": function,
-            "symbol": symbol,
-            "apikey": settings.alpha_vantage_key,
-        },
-    )
+    global _last_request_at
+    async with _request_lock:
+        wait = MIN_REQUEST_INTERVAL - (time.monotonic() - _last_request_at)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            response = await _http_client.get(
+                BASE_URL,
+                params={
+                    "function": function,
+                    "symbol": symbol,
+                    "apikey": settings.alpha_vantage_key,
+                },
+            )
+        finally:
+            _last_request_at = time.monotonic()
     response.raise_for_status()
     data: dict = response.json()
 

@@ -116,13 +116,20 @@ async def _handle_result(
 
     report = ResearchReport.model_validate(message.structured_output)
     ungrounded = [c for c in report.bull_case + report.bear_case if not _is_grounded(c, citation_tracker)]
-    if ungrounded and not report.partial:
-        report = report.model_copy(
-            update={
-                "partial": True,
-                "partial_reason": f"{len(ungrounded)} claim(s) could not be verified against retrieved chunks",
-            }
-        )
+
+    # metrics and generated_at are owned by the server, not the model: the model may
+    # fill them from web-search snippets or invent a timestamp.
+    metrics = citation_tracker.stock_metrics or {}
+    reasons = []
+    if ungrounded:
+        reasons.append(f"{len(ungrounded)} claim(s) could not be verified against retrieved chunks")
+    if not metrics:
+        reasons.append("stock_data_tool returned no data, so market metrics are unavailable")
+
+    update: dict = {"metrics": metrics, "generated_at": datetime.utcnow()}
+    if reasons and not report.partial:
+        update.update(partial=True, partial_reason="; ".join(reasons))
+    report = report.model_copy(update=update)
 
     session.status = "done"
     session.partial_report = report

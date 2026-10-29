@@ -40,6 +40,7 @@ class CitationTracker:
     def __init__(self) -> None:
         self.chunk_sources: dict[str, str] = {}
         self.seen_urls: set[str] = set()
+        self.stock_metrics: dict | None = None
 
 
 def make_pre_tool_use_hook() -> HookCallback:
@@ -133,6 +134,10 @@ def make_post_tool_use_hook(
 
         citation_tracker.chunk_sources.update(_extract_chunk_sources(tool_response))
         citation_tracker.seen_urls.update(_extract_urls(tool_response))
+        if tool_name.endswith("stock_data_tool"):
+            payload = _parse_tool_response(tool_response)
+            if "price" in payload and "tool" not in payload:  # success payload, not a ToolError
+                citation_tracker.stock_metrics = payload
         await event_queue.put(ObserveEvent(summary=_summarize(tool_name, tool_response)))
         return {}
 
