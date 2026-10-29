@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.clients import qdrant as qdrant_client
+from app.config import settings
 from app.routers.agent import router as agent_router
 from app.routers.gateway import router as gateway_router
 from app.routers.reports import router as reports_router
@@ -35,12 +36,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",       # Vite dev server
-        "http://localhost:4173",       # Vite preview
-        "https://*.vercel.app",        # Vercel preview deployments
-    ],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
+    allow_credentials=False,  # no cookies or auth headers are used
     allow_methods=["*"],
     allow_headers=["*"],
 )

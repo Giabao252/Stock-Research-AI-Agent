@@ -50,5 +50,12 @@ class Settings(BaseSettings):
     # Agent SDK
     claude_model: str = "haiku"
 
+    # CORS — origins of the *browser app* calling this API (not this API's own URL).
+    # Env override: CORS_ORIGINS='["https://my-app.vercel.app"]' (JSON list).
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:4173"]
+    # Vercel preview deployments get a new subdomain per branch. Tighten to your project,
+    # e.g. r"https://my-app(-[a-z0-9-]+)?\.vercel\.app".
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
+
 
 settings = Settings()
